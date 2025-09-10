@@ -4,7 +4,6 @@ eventlet.monkey_patch()  # <-- MUST be first
 import os
 import uuid
 from datetime import datetime
-from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_sqlalchemy import SQLAlchemy
@@ -14,20 +13,15 @@ from werkzeug.utils import secure_filename
 
 from config import Config
 
-
 # Initialize app
 app = Flask(__name__)
 app.config.from_object(Config)
 
-# Ensure upload directories exist
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-os.makedirs(app.config['PROFILE_PICTURE_FOLDER'], exist_ok=True)
-
-db = SQLAlchemy(app)
+# Initialize extensions (but don't import models yet)
+db = SQLAlchemy()
 socketio = SocketIO(app, cors_allowed_origins="*")
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
-
 
 # Database Models
 class User(UserMixin, db.Model):
@@ -58,11 +52,18 @@ class Message(db.Model):
     sender = db.relationship('User', foreign_keys=[sender_id])
     recipient = db.relationship('User', foreign_keys=[recipient_id])
 
+# Initialize extensions with app
+db.init_app(app)
 
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
 
+# Initialize database
+def init_database():
+    with app.app_context():
+        db.create_all()
+        print("Database tables created successfully")
 
 # Routes
 @app.route('/')
@@ -103,16 +104,21 @@ def register():
         email = request.form.get('email')
         password = request.form.get('password')
         
-        if User.query.filter_by(username=username).first():
+        # Check if user exists
+        existing_user = User.query.filter_by(username=username).first()
+        if existing_user:
             flash('Username already exists')
             return redirect(url_for('register'))
         
-        if User.query.filter_by(email=email).first():
+        existing_email = User.query.filter_by(email=email).first()
+        if existing_email:
             flash('Email already exists')
             return redirect(url_for('register'))
         
-        user = User(username=username, email=email)
-        user.set_password(password)
+        # Create new user with hashed password
+        hashed_password = generate_password_hash(password)
+        user = User(username=username, email=email, password_hash=hashed_password)
+        
         db.session.add(user)
         db.session.commit()
         
@@ -372,9 +378,12 @@ def allowed_image_file(filename):
 
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-        os.makedirs(app.config['PROFILE_PICTURE_FOLDER'], exist_ok=True)
+    # Initialize database
+    init_database()
     
-    socketio.run(app, debug=True)
+    # Ensure directories exist
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    os.makedirs(app.config['PROFILE_PICTURE_FOLDER'], exist_ok=True)
+    
+    # Run the application
+    socketio.run(app, debug=True, host='0.0.0.0', port=10000)
