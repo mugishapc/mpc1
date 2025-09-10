@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+
+{% block title %}Chat with {{ recipient.username }}{% endblock %}
+
+{% block content %}
+<div class="chat-container">
+    <div class="sidebar">
+        <div class="user-header">
+            <h2>MugiChat</h2>
+            <div class="current-user">
+                <span>{{ current_user.username }}</span>
+                <a href="{{ url_for('logout') }}">Logout</a>
+            </div>
+        </div>
+        <div class="users-list">
+            <h3>Online Users</h3>
+            <ul>
+                {% for user in users %}
+                <li class="user-item {% if user.status == 'online' %}online{% else %}offline{% endif %}" data-user-id="{{ user.id }}">
+                    <span class="status-indicator"></span>
+                    <a href="{{ url_for('chat', user_id=user.id) }}">{{ user.username }}</a>
+                    {% if user.status != 'online' %}
+                    <span class="last-seen">Last seen: {{ user.last_seen.strftime('%Y-%m-%d %H:%M') }}</span>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    
+    <div class="chat-window">
+        <div class="chat-header">
+            <h2>Chat with {{ recipient.username }}</h2>
+            <span class="recipient-status {% if recipient.status == 'online' %}online{% else %}offline{% endif %}">
+                {% if recipient.status == 'online' %}Online{% else %}Offline{% endif %}
+            </span>
+        </div>
+        
+        <div class="messages-container" id="messages-container">
+            {% for message in messages %}
+            <div class="message {% if message.sender_id == current_user.id %}sent{% else %}received{% endif %}">
+                <div class="message-content">
+                    {% if message.body %}
+                    <p>{{ message.body }}</p>
+                    {% elif message.audio_file %}
+                    <div class="audio-message">
+                        <audio controls>
+                            <source src="{{ url_for('static', filename='uploads/audio/' + message.audio_file) }}" type="audio/webm">
+                            Your browser does not support the audio element.
+                        </audio>
+                    </div>
+                    {% endif %}
+                    <span class="message-time">{{ message.timestamp.strftime('%H:%M') }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        
+        <div class="typing-indicator" id="typing-indicator" style="display: none;">
+            <span>{{ recipient.username }} is typing...</span>
+        </div>
+        
+        <div class="message-input">
+            <form id="message-form">
+                <input type="hidden" id="recipient-id" value="{{ recipient.id }}">
+                <input type="text" id="message-text" placeholder="Type your message..." autocomplete="off">
+                <button type="button" id="record-button" class="record-btn">🎤</button>
+                <button type="submit">Send</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const socket = io();
+    const currentUserId = {{ current_user.id }};
+    const recipientId = {{ recipient.id }};
+    const recipientName = "{{ recipient.username }}";
+    
+    // Join room for this chat
+    socket.emit('join', { room: `chat_${currentUserId}_${recipientId}` });
+    
+    // Scroll to bottom of messages
+    function scrollToBottom() {
+        const container = document.getElementById('messages-container');
+        container.scrollTop = container.scrollHeight;
+    }
+    
+    // Handle message form submission
+    document.getElementById('message-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const messageInput = document.getElementById('message-text');
+        const message = messageInput.value.trim();
+        
+        if (message) {
+            socket.emit('send_message', {
+                recipient_id: recipientId,
+                message: message
+            });
+            
+            messageInput.value = '';
+            socket.emit('stop_typing', { recipient_id: recipientId });
+        }
+    });
+    
+    // Handle typing events
+    const messageInput = document.getElementById('message-text');
+    let typing = false;
+    let typingTimeout;
+    
+    messageInput.addEventListener('input', function() {
+        if (!typing) {
+            typing = true;
+            socket.emit('typing', { recipient_id: recipientId });
+        }
+        
+        clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(function() {
+            typing = false;
+            socket.emit('stop_typing', { recipient_id: recipientId });
+        }, 1000);
+    });
+    
+    // Handle incoming messages
+    socket.on('new_message', function(data) {
+        if (data.sender_id === currentUserId || data.sender_id === recipientId) {
+            const messagesContainer = document.getElementById('messages-container');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${data.sender_id === currentUserId ? 'sent' : 'received'}`;
+            
+            let messageContent = '';
+            if (data.body) {
+                messageContent = `
+                    <div class="message-content">
+                        <p>${data.body}</p>
+                        <span class="message-time">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                    </div>
+                `;
+            } else if (data.audio_file) {
+                messageContent = `
+                    <div class="message-content">
+                        <div class="audio-message">
+                            <audio controls>
+                                <source src="/static/uploads/audio/${data.audio_file}" type="audio/webm">
+                                Your browser does not support the audio element.
+                            </audio>
+                        </div>
+                        <span class="message-time">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                    </div>
+                `;
+            }
+            
+            messageDiv.innerHTML = messageContent;
+            messagesContainer.appendChild(messageDiv);
+            scrollToBottom();
+        }
+    });
+    
+    // Handle typing indicators
+    socket.on('user_typing', function(data) {
+        if (data.user_id === recipientId) {
+            document.getElementById('typing-indicator').style.display = 'block';
+            scrollToBottom();
+        }
+    });
+    
+    socket.on('user_stop_typing', function(data) {
+        if (data.user_id === recipientId) {
+            document.getElementById('typing-indicator').style.display = 'none';
+        }
+    });
+    
+    // Handle user status updates
+    socket.on('user_status', function(data) {
+        if (data.user_id === recipientId) {
+            const statusElement = document.querySelector('.recipient-status');
+            statusElement.textContent = data.status === 'online' ? 'Online' : 'Offline';
+            statusElement.className = `recipient-status ${data.status}`;
+        }
+    });
+    
+    // Voice recording functionality
+    const recordButton = document.getElementById('record-button');
+    let mediaRecorder;
+    let audioChunks = [];
+    
+    recordButton.addEventListener('click', function() {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+            // Stop recording
+            mediaRecorder.stop();
+            recordButton.textContent = '🎤';
+            recordButton.classList.remove('recording');
+        } else {
+            // Start recording
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    audioChunks = [];
+                    mediaRecorder = new MediaRecorder(stream);
+                    
+                    mediaRecorder.ondataavailable = event => {
+                        audioChunks.push(event.data);
+                    };
+                    
+                    mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        
+                        // Create form data and send to server
+                        const formData = new FormData();
+                        formData.append('audio', audioBlob);
+                        formData.append('recipient_id', recipientId);
+                        
+                        fetch('/upload_audio', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.success) {
+                                console.log('Audio sent successfully');
+                            } else {
+                                console.error('Error sending audio:', data.error);
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error:', error);
+                        });
+                    };
+                    
+                    mediaRecorder.start();
+                    recordButton.textContent = '⏹️';
+                    recordButton.classList.add('recording');
+                })
+                .catch(error => {
+                    console.error('Error accessing microphone:', error);
+                });
+        }
+    });
+    
+    // Scroll to bottom on page load
+    window.addEventListener('load', scrollToBottom);
+</script>
+{% endblock %}

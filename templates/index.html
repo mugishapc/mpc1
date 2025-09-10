@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Home{% endblock %}
+
+{% block content %}
+<div class="chat-container">
+    <div class="sidebar">
+        <div class="user-header">
+            <h2>MugiChat</h2>
+            <div class="current-user">
+                <span>{{ current_user.username }}</span>
+                <a href="{{ url_for('logout') }}">Logout</a>
+            </div>
+        </div>
+        <div class="users-list">
+            <h3>Online Users</h3>
+            <ul>
+                {% for user in users %}
+                <li class="user-item {% if user.status == 'online' %}online{% else %}offline{% endif %}" data-user-id="{{ user.id }}">
+                    <span class="status-indicator"></span>
+                    <a href="{{ url_for('chat', user_id=user.id) }}">{{ user.username }}</a>
+                    {% if user.status != 'online' %}
+                    <span class="last-seen">Last seen: {{ user.last_seen.strftime('%Y-%m-%d %H:%M') }}</span>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    <div class="main-content">
+        <div class="welcome-message">
+            <h2>Welcome to MugiChat</h2>
+            <p>Select a user from the sidebar to start chatting</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const socket = io();
+    const currentUserId = {{ current_user.id }};
+    
+    socket.on('connect', function() {
+        console.log('Connected to server');
+    });
+    
+    socket.on('user_status', function(data) {
+        const userItem = document.querySelector(`.user-item[data-user-id="${data.user_id}"]`);
+        if (userItem) {
+            if (data.status === 'online') {
+                userItem.classList.add('online');
+                userItem.classList.remove('offline');
+                const lastSeen = userItem.querySelector('.last-seen');
+                if (lastSeen) lastSeen.remove();
+            } else {
+                userItem.classList.remove('online');
+                userItem.classList.add('offline');
+                if (data.last_seen) {
+                    let lastSeen = userItem.querySelector('.last-seen');
+                    if (!lastSeen) {
+                        lastSeen = document.createElement('span');
+                        lastSeen.className = 'last-seen';
+                        userItem.appendChild(lastSeen);
+                    }
+                    lastSeen.textContent = `Last seen: ${data.last_seen}`;
+                }
+            }
+        }
+    });
+</script>
+{% endblock %}
