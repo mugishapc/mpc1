@@ -1,3 +1,6 @@
+import eventlet
+eventlet.monkey_patch()  # <-- MUST be first
+
 import os
 import uuid
 from datetime import datetime
@@ -10,6 +13,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
 from config import Config
+
 
 # Initialize app
 app = Flask(__name__)
